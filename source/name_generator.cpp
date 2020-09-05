@@ -76,7 +76,6 @@ static char* GetContentDirectory()
 static unsigned long GetRand(int V)
 {
     V = V <= 0 ? 1 : V;
-    // sacrificing GetQueryPerformanceCounter slowness to get a good random list
     const LARGE_INTEGER R = GetQueryPerformanceCounter();
     stb_srand(R.QuadPart);
     return (unsigned long)(stb_frand() * V);
