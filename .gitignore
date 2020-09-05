@@ -1,0 +1,6 @@
+*.rdbg
+*.4coder
+*.pdb
+*.obj
+*.bat
+*.sh
