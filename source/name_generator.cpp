@@ -33,6 +33,10 @@ struct list
     int FileCount;
 };
 
+static char** StoragePtr;
+static char** StorageStartPtr;
+static const int StorageBufferSize = 1024 * 1024 * 1024;
+
 struct generate
 {
     const char* Commands[C_MAX] = {"generate", "copy", "close", "help"};
@@ -41,11 +45,13 @@ struct generate
     list Lists;
     buffer NamesBuffer = {nullptr, nullptr, 1024 * 1024 * 1024};
 };
+
 // -- define
 
 static generate Generate;
 
 // functions
+
 static LARGE_INTEGER GetQueryPerformanceCounter()
 {
     LARGE_INTEGER Result;
@@ -89,7 +95,7 @@ static void GenerateNames(const int NamesCountInput, const int WordCountInput)
     printf("\n");
     
     Start = GetQueryPerformanceCounter();
-    ResetBuffer(Generate.NamesBuffer);
+    AllocBuffer(Generate.NamesBuffer);
     
     char NameBuffer[255];
     for(int NamesCountIndex = 0; NamesCountIndex < NamesCountInput; ++NamesCountIndex)
@@ -205,11 +211,15 @@ static bool LoadContent()
     {
         if(Generate.Directories = stb_readdir_recursive((char*)ContentDirectory, nullptr))
         {
+            StorageStartPtr = (char**)VirtualAlloc(nullptr, StorageBufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            StoragePtr = StorageStartPtr;
+            
             for(int DirectoryIndex = 0; DirectoryIndex < stb_arr_len(Generate.Directories); ++DirectoryIndex)
             {
                 word_file File = {};
                 File.Buffer = stb_stringfile(Generate.Directories[DirectoryIndex], &File.BufferCount);
                 
+                // storing data like this results in slower lookups. 
                 stb_arr_push(Generate.Lists.Files, File);
             }
             Generate.Lists.FileCount = stb_arr_len(Generate.Lists.Files);
@@ -237,9 +247,8 @@ int main(int argc, char** argv)
     if(LoadContent())
     {
         QueryPerformanceFrequency(&Generate.Frequency);
-        AllocBuffer(Generate.NamesBuffer);
         
-        bool bValidCommand = Prompt(C_Help) && ValidBuffer(Generate.NamesBuffer);
+        bool bValidCommand = Prompt(C_Help);
         while(bValidCommand)
         {
             char Buffer[255];
@@ -252,6 +261,7 @@ int main(int argc, char** argv)
                 {
                     bFoundValidCommand = true;
                     bValidCommand = Prompt((commands)CommandIndex);
+                    break;
                 }
             }
             
