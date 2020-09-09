@@ -6,6 +6,7 @@
 #include "stb/stb.h"
 
 #include "name_generator_buffer.h"
+#include "name_generator_dictionary.h"
 
 // define
 static const int MAX_PATH_LENGTH = 255;
@@ -14,6 +15,7 @@ static const char* CONTENT_PATH = "\\content\\";
 enum commands
 {
     C_Generate,
+    C_GenerateFrom,
     C_Copy,
     C_Close,
     C_Help,
@@ -39,7 +41,7 @@ static const int StorageBufferSize = 1024 * 1024 * 1024;
 
 struct generate
 {
-    const char* Commands[C_MAX] = {"generate", "copy", "close", "help"};
+    const char* Commands[C_MAX] = {"generate", "from", "copy", "close", "help"};
     char** Directories = nullptr;
     LARGE_INTEGER Frequency;
     list Lists;
@@ -97,10 +99,10 @@ static void GenerateNames(const int NamesCountInput, const int WordCountInput)
     Start = GetQueryPerformanceCounter();
     AllocBuffer(Generate.NamesBuffer);
     
-    char NameBuffer[255];
+    char NameBuffer[1024];
     for(int NamesCountIndex = 0; NamesCountIndex < NamesCountInput; ++NamesCountIndex)
     {
-        memset(&NameBuffer[0], 0, 255);
+        memset(&NameBuffer[0], 0, 1024);
         char* NameBufferPtr = &NameBuffer[0];
         
         for(int WordCountIndex = 0; WordCountIndex < WordCountInput; ++WordCountIndex)
@@ -128,10 +130,110 @@ static void GenerateNames(const int NamesCountInput, const int WordCountInput)
     printf("Took %f seconds to generate %d names with %d words each.\n", Time, NamesCountInput, WordCountInput);
 }
 
+static void GenerateNameFromStarting(const char* Word)
+{
+    char NameBuffer[255];
+    memset(&NameBuffer[0], 0, 255);
+    char* NameBufferPtr = &NameBuffer[0];
+    
+    const int Length = GetTableLengthForWord(Word);
+    if(Length)
+    {
+        const int RandomWordID = (int)(GetRand(Length));
+        const char* RandWord = GetWordFromDictionary(Word, RandomWordID);
+        
+        memcpy(NameBufferPtr, RandWord, strlen(RandWord));
+        NameBufferPtr += strlen(RandWord);
+        memcpy(NameBufferPtr, " \n", 2);
+        NameBufferPtr += 1;
+        
+        const int NameLength = strlen(&NameBuffer[0]);
+        memcpy(Generate.NamesBuffer.Ptr, &NameBuffer[0], NameLength);
+        IncrementBuffer(Generate.NamesBuffer, NameLength);
+        
+        printf("%s", &NameBuffer[0]);
+    }
+}
+
 static void ClosingPrompt(const char* Prompt)
 {
     printf("%s\n", Prompt);
     Sleep(1000);
+}
+
+static char** SplitWordCamelCase(char* Word, int& SplitCount)
+{
+    int Count = 0;
+    int CapsIndex[255];
+    
+    char* Ptr = Word;
+    while(*Ptr)
+    {
+        if(IsUpperCase(*Ptr))
+        {
+            CapsIndex[SplitCount++] = Count;
+        }
+        ++Count;
+        ++Ptr;
+    }
+    
+    char** Result = (char**)VirtualAlloc(nullptr, SplitCount, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    int ResultIndex = 0;
+    
+    for(int CharacterIndex = 0; CharacterIndex < SplitCount; ++CharacterIndex)
+    {
+        const int WordLength = (int)strlen(Word);
+        const int Size = (CharacterIndex + 1 < SplitCount) ? CapsIndex[CharacterIndex + 1] - CapsIndex[CharacterIndex] :  WordLength - CapsIndex[CharacterIndex];
+        
+        Result[ResultIndex] = (char*)VirtualAlloc(nullptr, Size + 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        memcpy(Result[ResultIndex], &Word[CapsIndex[CharacterIndex]], Size);
+        memset(&Result[ResultIndex][Size + 1], 0, 1);
+        
+        ++ResultIndex;
+    }
+    
+    return Result;
+}
+
+static void GenerateNamesFrom(const int NamesCountInput, const char** NamesRoot, const int NamesRootCount)
+{
+    static LARGE_INTEGER Start;
+    static LARGE_INTEGER End;
+    
+    printf("\n");
+    
+    Start = GetQueryPerformanceCounter();
+    AllocBuffer(Generate.NamesBuffer);
+    
+    char NameBuffer[1024];
+    for(int NameCountIndex = 0; NameCountIndex < NamesCountInput; ++NameCountIndex)
+    {
+        memset(&NameBuffer[0], 0, 1024);
+        char* NameBufferPtr = &NameBuffer[0];
+        
+        for(int NameRootIndex = 0; NameRootIndex < NamesRootCount; ++NameRootIndex)
+        {
+            const int TableLength = GetTableLengthForWord(NamesRoot[NameRootIndex]);
+            const int Random = (int)(GetRand(TableLength));
+            if(char* RandomWord = GetWordFromDictionary(NamesRoot[NameRootIndex], Random))
+            {
+                memcpy(NameBufferPtr, RandomWord, strlen(RandomWord));
+                NameBufferPtr += strlen(RandomWord);
+                memcpy(NameBufferPtr, " \n", 2);
+                NameBufferPtr += 1;
+            }
+        }
+        
+        const int NameLength = strlen(&NameBuffer[0]);
+        memcpy(Generate.NamesBuffer.Ptr, &NameBuffer[0], NameLength);
+        IncrementBuffer(Generate.NamesBuffer, NameLength);
+        
+        printf("%s", &NameBuffer[0]);
+    }
+    
+    End = GetQueryPerformanceCounter();
+    double Time = GetSecondsElapsed(Start, End);
+    printf("Took %f seconds to generate %d names from root.\n", Time, NamesCountInput);
 }
 
 static bool Prompt(const commands Command)
@@ -166,6 +268,29 @@ static bool Prompt(const commands Command)
                 
                 return Prompt(C_Help);
             }
+        } break;
+        case C_GenerateFrom:
+        {
+            int NamesCountInput = 0;
+            char Current[255];
+            
+            printf("Enter the current word you want to generate from...\n");
+            scanf("%s", &Current[0]);
+            
+            printf("Enter the number of names to generate...\n");
+            scanf("%d", &NamesCountInput);
+            
+            int Count = 0;
+            if(char** R = SplitWordCamelCase(Current, Count))
+            {
+                if(Count <= 0)
+                {
+                    return Prompt(C_Help);
+                }
+                GenerateNamesFrom(NamesCountInput, (const char**)R, Count);
+            }
+            
+            return Prompt(C_Help);
         } break;
         case C_Copy:
         {
@@ -214,10 +339,14 @@ static bool LoadContent()
             StorageStartPtr = (char**)VirtualAlloc(nullptr, StorageBufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             StoragePtr = StorageStartPtr;
             
+            InitDictionary();
+            
             for(int DirectoryIndex = 0; DirectoryIndex < stb_arr_len(Generate.Directories); ++DirectoryIndex)
             {
                 word_file File = {};
                 File.Buffer = stb_stringfile(Generate.Directories[DirectoryIndex], &File.BufferCount);
+                
+                AddToDictionary(File.Buffer, File.BufferCount);
                 
                 // storing data like this results in slower lookups. 
                 stb_arr_push(Generate.Lists.Files, File);
